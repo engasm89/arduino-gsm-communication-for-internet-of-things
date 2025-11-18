@@ -4,17 +4,32 @@
 #include "esp_http_client.h" // HTTP client
 
 static const char *TAG = "GSM_IOT"; // Log tag
+static int backoff_ms = 2000; // Initial retry backoff
 
 static void http_task(void *arg) { // Task for HTTP request
   esp_http_client_config_t config = { .url = "http://example.com/iot" }; // Endpoint URL placeholder
   esp_http_client_handle_t client = esp_http_client_init(&config); // Create client
+  int sample = 0; // Sample counter
   while (true) { // Loop
-    if (esp_http_client_perform(client) == ESP_OK) { // Perform GET
-      ESP_LOGI(TAG, "Status = %d", esp_http_client_get_status_code(client)); // Log status
+    char payload[128]; // JSON payload buffer
+    sample++; // Increment sample
+    int temp = 25 + (sample % 5); // Simulated temp
+    int hum = 50 + (sample % 10); // Simulated humidity
+    snprintf(payload, sizeof(payload), "{\"sample\":%d,\"temp\":%d,\"hum\":%d}", sample, temp, hum); // Build JSON
+    esp_http_client_set_url(client, "http://example.com/iot"); // Set URL
+    esp_http_client_set_method(client, HTTP_METHOD_POST); // Use POST
+    esp_http_client_set_header(client, "Content-Type", "application/json"); // JSON header
+    esp_http_client_set_post_field(client, payload, strlen(payload)); // Set body
+    if (esp_http_client_perform(client) == ESP_OK) { // Perform request
+      int status = esp_http_client_get_status_code(client); // Get status
+      ESP_LOGI(TAG, "POST sample=%d status=%d", sample, status); // Log success
+      backoff_ms = 2000; // Reset backoff on success
+      vTaskDelay(pdMS_TO_TICKS(5000)); // Normal interval
     } else { // Error
-      ESP_LOGW(TAG, "HTTP request failed"); // Warn
+      ESP_LOGW(TAG, "HTTP POST failed, backoff=%dms", backoff_ms); // Warn with backoff
+      vTaskDelay(pdMS_TO_TICKS(backoff_ms)); // Wait before retry
+      backoff_ms = backoff_ms < 60000 ? backoff_ms * 2 : 60000; // Exponential backoff up to 60s
     } // End if
-    vTaskDelay(pdMS_TO_TICKS(5000)); // 5s interval
   } // End loop
 } // End task
 
